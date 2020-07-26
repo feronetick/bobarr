@@ -1,27 +1,27 @@
-import dayjs from 'dayjs';
-import axios from 'axios';
-import xmlParser from 'xml2json-light';
-import { orderBy, uniq, uniqBy } from 'lodash';
-import { mapSeries } from 'p-iteration';
-import { Injectable, Inject } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { Logger } from 'winston';
+import dayjs from "dayjs";
+import axios from "axios";
+import xmlParser from "xml2json-light";
+import { orderBy, uniq, uniqBy } from "lodash";
+import { mapSeries } from "p-iteration";
+import { Injectable, Inject } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { WINSTON_MODULE_PROVIDER } from "nest-winston";
+import { Logger } from "winston";
 
-import { ParameterKey } from 'src/app.dto';
-import { formatNumber } from 'src/utils/format-number';
-import { sanitize } from 'src/utils/sanitize';
+import { ParameterKey } from "src/app.dto";
+import { formatNumber } from "src/utils/format-number";
+import { sanitize } from "src/utils/sanitize";
 
-import { ParamsService } from 'src/modules/params/params.service';
-import { LibraryService } from 'src/modules/library/library.service';
+import { ParamsService } from "src/modules/params/params.service";
+import { LibraryService } from "src/modules/library/library.service";
 
-import { TVSeasonDAO } from 'src/entities/dao/tvseason.dao';
-import { TVEpisodeDAO } from 'src/entities/dao/tvepisode.dao';
-import { Quality } from 'src/entities/quality.entity';
-import { Tag } from 'src/entities/tag.entity';
+import { TVSeasonDAO } from "src/entities/dao/tvseason.dao";
+import { TVEpisodeDAO } from "src/entities/dao/tvepisode.dao";
+import { Quality } from "src/entities/quality.entity";
+import { Tag } from "src/entities/tag.entity";
 
-import { JackettResult, JackettIndexer } from './jackett.dto';
-import { Entertainment } from '../tmdb/tmdb.dto';
+import { JackettResult, JackettIndexer } from "./jackett.dto";
+import { Entertainment } from "../tmdb/tmdb.dto";
 
 @Injectable()
 export class JackettService {
@@ -31,18 +31,22 @@ export class JackettService {
     private readonly libraryService: LibraryService,
     private readonly tvSeasonDAO: TVSeasonDAO,
     private readonly tvEpisodeDAO: TVEpisodeDAO,
-    private readonly configService: ConfigService,
+    private readonly configService: ConfigService
   ) {
-    this.logger = logger.child({ context: 'JackettService' });
+    this.logger = logger.child({ context: "JackettService" });
   }
 
-  private async request<TData>(path: string, params: Record<string, any>, timeout: number = 0) {
+  private async request<TData>(
+    path: string,
+    params: Record<string, any>,
+    timeout: number = 0
+  ) {
     const jackettApiKey = await this.paramsService.get(
       ParameterKey.JACKETT_API_KEY
     );
 
-    const host: string = this.configService.get('jackett.host', 'jackett');
-    const port: number = this.configService.get('jackett.port', 9117);
+    const host: string = this.configService.get("jackett.host", "jackett");
+    const port: number = this.configService.get("jackett.port", 9117);
 
     const client = axios.create({
       baseURL: `http://${host}:${port}/api/v2.0/indexers/all`,
@@ -63,14 +67,14 @@ export class JackettService {
       indexers: {
         indexer: JackettIndexer[] | JackettIndexer;
       };
-    }>('/results/torznab', { t: 'indexers', configured: true });
+    }>("/results/torznab", { t: "indexers", configured: true });
     return Array.isArray(indexers.indexer)
       ? indexers.indexer
       : [indexers.indexer];
   }
 
   public async searchMovie(movieId: number) {
-    this.logger.info('search movie', { movieId });
+    this.logger.info("search movie", { movieId });
 
     const maxSize = await this.paramsService.getNumber(
       ParameterKey.MAX_MOVIE_DOWNLOAD_SIZE
@@ -78,15 +82,15 @@ export class JackettService {
 
     const movie = await this.libraryService.getMovie(movieId);
     const queries = [
-      `${movie.title} ${dayjs(movie.releaseDate).format('YYYY')}`,
-      `${movie.originalTitle} ${dayjs(movie.releaseDate).format('YYYY')}`,
+      `${movie.title} ${dayjs(movie.releaseDate).format("YYYY")}`,
+      `${movie.originalTitle} ${dayjs(movie.releaseDate).format("YYYY")}`,
     ];
 
     return this.search(queries, { maxSize, type: Entertainment.Movie });
   }
 
   public async searchSeason(seasonId: number) {
-    this.logger.info('search tv season', { seasonId });
+    this.logger.info("search tv season", { seasonId });
 
     const maxSize = await this.paramsService.getNumber(
       ParameterKey.MAX_TVSHOW_EPISODE_DOWNLOAD_SIZE
@@ -94,12 +98,12 @@ export class JackettService {
 
     const tvSeason = await this.tvSeasonDAO.findOneOrFail({
       where: { id: seasonId },
-      relations: ['tvShow', 'episodes'],
+      relations: ["tvShow", "episodes"],
     });
 
     const tvShow = await this.libraryService.getTVShow(tvSeason.tvShow.id);
     const enTVShow = await this.libraryService.getTVShow(tvSeason.tvShow.id, {
-      language: 'en',
+      language: "en",
     });
 
     const titles = [tvShow.title, enTVShow.title];
@@ -123,7 +127,7 @@ export class JackettService {
   }
 
   public async searchEpisode(episodeId: number) {
-    this.logger.info('search tv episode', { episodeId });
+    this.logger.info("search tv episode", { episodeId });
 
     const maxSize = await this.paramsService.getNumber(
       ParameterKey.MAX_TVSHOW_EPISODE_DOWNLOAD_SIZE
@@ -131,12 +135,12 @@ export class JackettService {
 
     const tvEpisode = await this.tvEpisodeDAO.findOneOrFail({
       where: { id: episodeId },
-      relations: ['tvShow'],
+      relations: ["tvShow"],
     });
 
     const tvShow = await this.libraryService.getTVShow(tvEpisode.tvShow.id);
     const enTVShow = await this.libraryService.getTVShow(tvEpisode.tvShow.id, {
-      language: 'en',
+      language: "en",
     });
 
     const s = formatNumber(tvEpisode.seasonNumber);
@@ -168,11 +172,11 @@ export class JackettService {
     }
   ) {
     const indexers = await this.getConfiguredIndexers();
-    const noResultsError = 'NO_RESULTS';
+    const noResultsError = "NO_RESULTS";
 
     const timeout = opts.withoutFilter
-        ? this.configService.get('jackett.manualSearchTimeout', 120000)
-        : this.configService.get('jackett.automaticSearchTimeout', 15000);
+      ? this.configService.get("jackett.manualSearchTimeout", 120000)
+      : this.configService.get("jackett.automaticSearchTimeout", 15000);
 
     try {
       const allIndexers = indexers.map((indexer) =>
@@ -180,7 +184,7 @@ export class JackettService {
           ...opts,
           queries,
           indexer,
-          timeout
+          timeout,
         })
       );
 
@@ -192,8 +196,8 @@ export class JackettService {
 
       const sortedByBest = orderBy(
         flattenIndexers,
-        ['tag.score', 'quality.score', 'seeders'],
-        ['desc', 'desc', 'desc']
+        ["tag.score", "quality.score", "seeders"],
+        ["desc", "desc", "desc"]
       );
 
       return opts.withoutFilter ? sortedByBest : [sortedByBest[0]];
@@ -227,7 +231,7 @@ export class JackettService {
     maxSize?: number;
     isSeason?: boolean;
     withoutFilter?: boolean;
-    timeout?: number,
+    timeout?: number;
     type?: Entertainment;
   }) {
     const qualityParams = await this.paramsService.getQualities(type);
@@ -235,21 +239,21 @@ export class JackettService {
 
     const rawResults = await mapSeries(uniq(queries), async (query) => {
       const normalizedQuery = sanitize(query);
-      this.logger.info('search torrents with query', {
-        indexer: indexer?.title || 'all',
+      this.logger.info("search torrents with query", {
+        indexer: indexer?.title || "all",
         query: normalizedQuery,
       });
 
       try {
         const { data } = await this.request<{ Results: JackettResult[] }>(
-          '/results',
+          "/results",
           {
             Query: normalizedQuery,
             Category: [2000, 5000, 5070],
             Tracker: indexer ? [indexer.id] : undefined,
             _: Number(new Date()),
           },
-          timeout,
+          timeout
         );
 
         return data.Results;
@@ -260,7 +264,7 @@ export class JackettService {
 
     this.logger.info(`found ${rawResults.flat().length} potential results`);
     // this.logger.info(JSON.stringify(rawResults.flat()));
-    const results = uniqBy(rawResults.flat(), 'Guid')
+    const results = uniqBy(rawResults.flat(), "Guid")
       .filter((result) => result.Link || result.MagnetUri)
       .map((result) =>
         this.formatSearchResult({ result, qualityParams, preferredTags })
@@ -299,7 +303,7 @@ export class JackettService {
   }) => {
     const normalizedTitle = sanitize(result.Title);
     const normalizedTitleParts = normalizedTitle
-      .split(' ')
+      .split(" ")
       .filter((str) => str && str.trim());
 
     return {
@@ -331,7 +335,7 @@ export class JackettService {
 
     return tagMatch
       ? { label: tagMatch.name, score: tagMatch.score }
-      : { label: 'unknown', score: unknownScore };
+      : { label: "unknown", score: unknownScore };
   }
 
   private parseQuality(normalizedTitle: string[], qualityParams: Quality[]) {
@@ -343,14 +347,14 @@ export class JackettService {
 
     return qualityMatch
       ? { label: qualityMatch.name, score: qualityMatch.score }
-      : { label: 'unknown', score: 0 };
+      : { label: "unknown", score: 0 };
   }
 
   private canSearchOriginalTitle(originalCountries: string[]) {
     // original titles may be hard to search on occidental trackers
     // they may return incorrect torrent to download
     return !originalCountries.some((country) =>
-      ['CN', 'CH', 'JP'].includes(country)
+      ["CN", "CH", "JP"].includes(country)
     );
   }
 }
