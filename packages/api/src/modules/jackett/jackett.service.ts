@@ -22,8 +22,6 @@ import { Tag } from 'src/entities/tag.entity';
 
 import { JackettResult, JackettIndexer } from './jackett.dto';
 import { Entertainment } from '../tmdb/tmdb.dto';
-import { PromiseRaceAll } from 'src/utils/promise-resolve';
-
 
 @Injectable()
 export class JackettService {
