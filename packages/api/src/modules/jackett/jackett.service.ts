@@ -28,19 +28,19 @@ import { PromiseRaceAll } from 'src/utils/promise-resolve';
 @Injectable()
 export class JackettService {
   public constructor(
-      @Inject(WINSTON_MODULE_PROVIDER) private logger: Logger,
-      private readonly paramsService: ParamsService,
-      private readonly libraryService: LibraryService,
-      private readonly tvSeasonDAO: TVSeasonDAO,
-      private readonly tvEpisodeDAO: TVEpisodeDAO,
-      private readonly configService: ConfigService,
+    @Inject(WINSTON_MODULE_PROVIDER) private logger: Logger,
+    private readonly paramsService: ParamsService,
+    private readonly libraryService: LibraryService,
+    private readonly tvSeasonDAO: TVSeasonDAO,
+    private readonly tvEpisodeDAO: TVEpisodeDAO,
+    private readonly configService: ConfigService,
   ) {
     this.logger = logger.child({ context: 'JackettService' });
   }
 
-  private async request<TData>(path: string, params: Record<string, any>) {
+  private async request<TData>(path: string, params: Record<string, any>, timeout: number = 0) {
     const jackettApiKey = await this.paramsService.get(
-        ParameterKey.JACKETT_API_KEY
+      ParameterKey.JACKETT_API_KEY
     );
 
     const host: string = this.configService.get('jackett.host', 'jackett');
@@ -49,6 +49,7 @@ export class JackettService {
     const client = axios.create({
       baseURL: `http://${host}:${port}/api/v2.0/indexers/all`,
       params: { apikey: jackettApiKey },
+      timeout: timeout,
     });
 
     return client.get<TData>(path, { params });
@@ -66,15 +67,15 @@ export class JackettService {
       };
     }>('/results/torznab', { t: 'indexers', configured: true });
     return Array.isArray(indexers.indexer)
-        ? indexers.indexer
-        : [indexers.indexer];
+      ? indexers.indexer
+      : [indexers.indexer];
   }
 
   public async searchMovie(movieId: number) {
     this.logger.info('search movie', { movieId });
 
     const maxSize = await this.paramsService.getNumber(
-        ParameterKey.MAX_MOVIE_DOWNLOAD_SIZE
+      ParameterKey.MAX_MOVIE_DOWNLOAD_SIZE
     );
 
     const movie = await this.libraryService.getMovie(movieId);
@@ -90,7 +91,7 @@ export class JackettService {
     this.logger.info('search tv season', { seasonId });
 
     const maxSize = await this.paramsService.getNumber(
-        ParameterKey.MAX_TVSHOW_EPISODE_DOWNLOAD_SIZE
+      ParameterKey.MAX_TVSHOW_EPISODE_DOWNLOAD_SIZE
     );
 
     const tvSeason = await this.tvSeasonDAO.findOneOrFail({
@@ -109,12 +110,12 @@ export class JackettService {
     }
 
     const queries = uniq(titles)
-        .map((title) => [
-          `${title} S${formatNumber(tvSeason.seasonNumber)}`,
-          `${title} Season ${formatNumber(tvSeason.seasonNumber)}`,
-          `${title} Saison ${formatNumber(tvSeason.seasonNumber)}`,
-        ])
-        .flat();
+      .map((title) => [
+        `${title} S${formatNumber(tvSeason.seasonNumber)}`,
+        `${title} Season ${formatNumber(tvSeason.seasonNumber)}`,
+        `${title} Saison ${formatNumber(tvSeason.seasonNumber)}`,
+      ])
+      .flat();
 
     return this.search(queries, {
       maxSize: maxSize * tvSeason.episodes.length,
@@ -127,7 +128,7 @@ export class JackettService {
     this.logger.info('search tv episode', { episodeId });
 
     const maxSize = await this.paramsService.getNumber(
-        ParameterKey.MAX_TVSHOW_EPISODE_DOWNLOAD_SIZE
+      ParameterKey.MAX_TVSHOW_EPISODE_DOWNLOAD_SIZE
     );
 
     const tvEpisode = await this.tvEpisodeDAO.findOneOrFail({
@@ -149,47 +150,52 @@ export class JackettService {
     }
 
     const queries = uniq(titles)
-        .map((title) => [
-          `${title} S${s}E${e}`,
-          `${title} Season ${s} Episode ${e}`,
-          `${title} Saison ${s} Episode ${e}`,
-        ])
-        .flat();
+      .map((title) => [
+        `${title} S${s}E${e}`,
+        `${title} Season ${s} Episode ${e}`,
+        `${title} Saison ${s} Episode ${e}`,
+      ])
+      .flat();
 
     return this.search(queries, { maxSize, type: Entertainment.TvShow });
   }
 
   public async search(
-      queries: string[],
-      opts: {
-        maxSize?: number;
-        isSeason?: boolean;
-        withoutFilter?: boolean;
-        type?: Entertainment;
-      }
+    queries: string[],
+    opts: {
+      maxSize?: number;
+      isSeason?: boolean;
+      withoutFilter?: boolean;
+      type?: Entertainment;
+    }
   ) {
     const indexers = await this.getConfiguredIndexers();
     const noResultsError = 'NO_RESULTS';
 
+    const timeout = opts.withoutFilter
+        ? this.configService.get('jackett.manualSearchTimeout', 120000)
+        : this.configService.get('jackett.automaticSearchTimeout', 15000);
+
     try {
       const allIndexers = indexers.map((indexer) =>
-          this.searchIndexer({ ...opts, queries, indexer })
+        this.searchIndexer({
+          ...opts,
+          queries,
+          indexer,
+          timeout
+        })
       );
 
-      const resolvedIndexers = await PromiseRaceAll(
-          allIndexers,
-          opts.withoutFilter
-              ? this.configService.get('jackett.manualSearchTimeout', 120000)
-              : this.configService.get('jackett.automaticSearchTimeout', 15000)
-      );
+      const resolvedIndexers = await Promise.all(allIndexers);
+
       const flattenIndexers = resolvedIndexers
-          .filter((item) => Boolean(item))
-          ?.flat();
+        .filter((item) => Boolean(item))
+        ?.flat();
 
       const sortedByBest = orderBy(
-          flattenIndexers,
-          ['tag.score', 'quality.score', 'seeders'],
-          ['desc', 'desc', 'desc']
+        flattenIndexers,
+        ['tag.score', 'quality.score', 'seeders'],
+        ['desc', 'desc', 'desc']
       );
 
       return opts.withoutFilter ? sortedByBest : [sortedByBest[0]];
@@ -210,18 +216,20 @@ export class JackettService {
   }
 
   public async searchIndexer({
-                               queries,
-                               indexer,
-                               maxSize = Infinity,
-                               isSeason = false,
-                               withoutFilter = false,
-                               type,
-                             }: {
+    queries,
+    indexer,
+    maxSize = Infinity,
+    isSeason = false,
+    withoutFilter = false,
+    timeout = 0,
+    type,
+  }: {
     queries: string[];
     indexer?: JackettIndexer;
     maxSize?: number;
     isSeason?: boolean;
     withoutFilter?: boolean;
+    timeout?: number,
     type?: Entertainment;
   }) {
     const qualityParams = await this.paramsService.getQualities(type);
@@ -236,13 +244,14 @@ export class JackettService {
 
       try {
         const { data } = await this.request<{ Results: JackettResult[] }>(
-            '/results',
-            {
-              Query: normalizedQuery,
-              Category: [2000, 5000, 5070],
-              Tracker: indexer ? [indexer.id] : undefined,
-              _: Number(new Date()),
-            }
+          '/results',
+          {
+            Query: normalizedQuery,
+            Category: [2000, 5000, 5070],
+            Tracker: indexer ? [indexer.id] : undefined,
+            _: Number(new Date()),
+          },
+          timeout,
         );
 
         return data.Results;
@@ -254,26 +263,26 @@ export class JackettService {
     this.logger.info(`found ${rawResults.flat().length} potential results`);
     // this.logger.info(JSON.stringify(rawResults.flat()));
     const results = uniqBy(rawResults.flat(), 'Guid')
-        .filter((result) => result.Link || result.MagnetUri)
-        .map((result) =>
-            this.formatSearchResult({ result, qualityParams, preferredTags })
-        )
-        .filter((result) => {
-          if (withoutFilter) return true;
+      .filter((result) => result.Link || result.MagnetUri)
+      .map((result) =>
+        this.formatSearchResult({ result, qualityParams, preferredTags })
+      )
+      .filter((result) => {
+        if (withoutFilter) return true;
 
-          const hasAcceptableSize = result.size < maxSize;
-          const hasSeeders = result.seeders >= 5 && result.seeders > result.peers;
-          const hasTag = result.tag.score > 0;
+        const hasAcceptableSize = result.size < maxSize;
+        const hasSeeders = result.seeders >= 5 && result.seeders > result.peers;
+        const hasTag = result.tag.score > 0;
 
-          if (isSeason) {
-            const isEpisode = result.normalizedTitleParts.some((titlePart) =>
-                titlePart.match(/e\d+|episode|episode\d+|ep|ep\d+/)
-            );
-            return hasAcceptableSize && hasSeeders && !isEpisode;
-          }
+        if (isSeason) {
+          const isEpisode = result.normalizedTitleParts.some((titlePart) =>
+            titlePart.match(/e\d+|episode|episode\d+|ep|ep\d+/)
+          );
+          return hasAcceptableSize && hasSeeders && !isEpisode;
+        }
 
-          return hasAcceptableSize && hasSeeders && hasTag;
-        });
+        return hasAcceptableSize && hasSeeders && hasTag;
+      });
 
     this.logger.info(`found ${results.length} downloadable results`);
     // this.logger.info(results);
@@ -282,18 +291,18 @@ export class JackettService {
   }
 
   private formatSearchResult = ({
-                                  result,
-                                  qualityParams,
-                                  preferredTags,
-                                }: {
+    result,
+    qualityParams,
+    preferredTags,
+  }: {
     result: JackettResult;
     qualityParams: Quality[];
     preferredTags: Tag[];
   }) => {
     const normalizedTitle = sanitize(result.Title);
     const normalizedTitleParts = normalizedTitle
-        .split(' ')
-        .filter((str) => str && str.trim());
+      .split(' ')
+      .filter((str) => str && str.trim());
 
     return {
       normalizedTitle,
@@ -315,7 +324,7 @@ export class JackettService {
 
   private parseTag(normalizedTitle: string[], preferredTags: Tag[]) {
     const tagMatch = preferredTags.find((tag) =>
-        normalizedTitle.find((part) => part === tag.name.toLowerCase())
+      normalizedTitle.find((part) => part === tag.name.toLowerCase())
     );
 
     // we set score to 1 when there's not tag set
@@ -323,27 +332,27 @@ export class JackettService {
     const unknownScore = preferredTags.length > 0 ? 0 : 1;
 
     return tagMatch
-        ? { label: tagMatch.name, score: tagMatch.score }
-        : { label: 'unknown', score: unknownScore };
+      ? { label: tagMatch.name, score: tagMatch.score }
+      : { label: 'unknown', score: unknownScore };
   }
 
   private parseQuality(normalizedTitle: string[], qualityParams: Quality[]) {
     const qualityMatch = qualityParams.find((quality) =>
-        quality.match.some((keyword) =>
-            normalizedTitle.find((part) => part === keyword.toLowerCase())
-        )
+      quality.match.some((keyword) =>
+        normalizedTitle.find((part) => part === keyword.toLowerCase())
+      )
     );
 
     return qualityMatch
-        ? { label: qualityMatch.name, score: qualityMatch.score }
-        : { label: 'unknown', score: 0 };
+      ? { label: qualityMatch.name, score: qualityMatch.score }
+      : { label: 'unknown', score: 0 };
   }
 
   private canSearchOriginalTitle(originalCountries: string[]) {
     // original titles may be hard to search on occidental trackers
     // they may return incorrect torrent to download
     return !originalCountries.some((country) =>
-        ['CN', 'CH', 'JP'].includes(country)
+      ['CN', 'CH', 'JP'].includes(country)
     );
   }
 }
