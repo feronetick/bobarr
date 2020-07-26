@@ -1,15 +1,17 @@
 import { NestFactory } from "@nestjs/core";
 import { WinstonModule } from "nest-winston";
 import { UI } from "bull-board";
+import * as bodyParser from 'body-parser';
 
 import { AppModule } from "./app.module";
 import { winstonOptions } from "./utils/winston-options";
 
-async function bootstrap() {
-  const logger = WinstonModule.createLogger(winstonOptions);
-  const app = await NestFactory.create(AppModule, { logger, cors: true });
-  app.use("/jobs", UI);
-  await app.listen(4000);
-}
+(async () => {
+    const logger = WinstonModule.createLogger(winstonOptions);
+    const app = await NestFactory.create(AppModule, { logger, cors: true });
 
-bootstrap();
+    await app
+        .use(bodyParser.raw({limit: '50mb'}))
+        .use("/jobs", UI)
+        .listen(4000);
+})()
