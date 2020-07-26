@@ -12,6 +12,8 @@ import { winstonOptions } from "./utils/winston-options";
 
     await app
         .use(bodyParser.raw({limit: '50mb'}))
+        .use(bodyParser.json({limit: '50mb'}))
+        .use(bodyParser.urlencoded({limit: '50mb', extended: true}))
         .use("/jobs", UI)
         .listen(4000);
 })()
